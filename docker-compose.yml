@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: integration-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-integration}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-integration_secret}
+      POSTGRES_DB: ${POSTGRES_DB:-integration}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: integration-n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:-random_n8n_secret_key_12345}
+      - NODE_FUNCTION_ALLOW_BUILTIN=*
+      - NODE_FUNCTION_ALLOW_EXTERNAL=*
+      - STUDENT_USERNAME=${STUDENT_USERNAME:-student2}
+      - STUDENT_PASSWORD=${STUDENT_PASSWORD:-Yg4@;{9iW=d)}
+      - COURSE_STUDENT_ID=${COURSE_STUDENT_ID:-2}
+      - COURSE_API_BASE_URL=${COURSE_API_BASE_URL:-http://77.67.89.207:8080}
+    volumes:
+      - n8n_data:/home/node/.n8n
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  n8n_data:

@@ -1,0 +1,439 @@
+{
+  "name": "Синхронизация CMS, БД исторических данных и Report API (Баймурзина Элина student2)",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        0
+      ],
+      "id": "02c816a8-3dc1-4c37-b911-43743e010f69",
+      "name": "Manual Trigger"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -448,
+        200
+      ],
+      "id": "f0a42bbd-0460-4538-8357-77014b92a05a",
+      "name": "Every 6 Hours"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://77.67.89.207:8080/auth/token",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ username: $env.STUDENT_USERNAME, password: $env.STUDENT_PASSWORD }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        -224,
+        0
+      ],
+      "id": "e61eb152-864f-4190-af32-ad729930778c",
+      "name": "Get Token"
+    },
+    {
+      "parameters": {
+        "url": "http://77.67.89.207:8080/cms/spares",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "page",
+                    "value": "={{ $pageCount }}"
+                  },
+                  {
+                    "name": "size",
+                    "value": "10"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "responseIsEmpty",
+              "limitPagesFetched": true,
+              "maxRequests": 1000,
+              "requestInterval": 100
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        0,
+        0
+      ],
+      "id": "24386432-9db8-4680-a6db-baf01936f66a",
+      "name": "Get CMS Spares",
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "U8qGXmhusDdUnB6j",
+          "name": "Unnamed credential"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, name, description, type, status, price, quantity, updated_at, is_deleted\nFROM spares_history;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        224,
+        0
+      ],
+      "id": "3cfea102-737d-4bb3-b441-d8a8f50e8918",
+      "name": "Get DB Spares",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "nbrTwRvC6DWpwglD",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// Сравнение данных CMS с БД исторических данных.\n// Результат: какие детали добавить, какие обновить, какие пометить удалёнными.\nconst cmsItems = $('Get CMS Spares').all()\n  .map(item => item.json)\n  .filter(item => item.spareCode);\n\n// При пустой таблице Postgres нода отдаёт один пустой item (alwaysOutputData)\nconst dbItems = $('Get DB Spares').all()\n  .map(item => item.json)\n  .filter(item => item.id);\n\nconst cmsMap = new Map(cmsItems.map(item => [String(item.spareCode), item]));\nconst dbMap = new Map(dbItems.map(item => [String(item.id), item]));\n\nconst str = value => (value === null || value === undefined ? '' : String(value));\n\nfunction hasChanges(cms, db) {\n  return (\n    str(cms.spareName) !== str(db.name) ||\n    str(cms.spareDescription) !== str(db.description) ||\n    str(cms.spareType) !== str(db.type) ||\n    str(cms.spareStatus) !== str(db.status) ||\n    Number(cms.price) !== Number(db.price) ||\n    Number(cms.quantity) !== Number(db.quantity) ||\n    str(cms.updatedAt) !== str(db.updated_at)\n  );\n}\n\nconst toInsert = [];\nconst toUpdate = [];\nconst toDelete = [];\n\nfor (const [spareCode, cmsItem] of cmsMap) {\n  const dbItem = dbMap.get(spareCode);\n  if (!dbItem) {\n    toInsert.push(cmsItem);\n  } else if (dbItem.is_deleted || hasChanges(cmsItem, dbItem)) {\n    // деталь изменилась или вернулась в CMS после удаления\n    toUpdate.push(cmsItem);\n  }\n}\n\nfor (const [spareCode, dbItem] of dbMap) {\n  if (!cmsMap.has(spareCode) && !dbItem.is_deleted) {\n    toDelete.push(spareCode);\n  }\n}\n\nreturn [{\n  json: {\n    cms_count: cmsMap.size,\n    db_count: dbMap.size,\n    to_insert: toInsert,\n    to_update: toUpdate,\n    to_delete: toDelete,\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "c70c00cc-5e3e-4a91-8423-1334101167f4",
+      "name": "Sync CMS and DB Spares"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO spares_history\n    (id, name, description, type, status, price, quantity, updated_at, last_synced_at, is_deleted)\nSELECT r.\"spareCode\", r.\"spareName\", r.\"spareDescription\", r.\"spareType\", r.\"spareStatus\",\n       r.\"price\", r.\"quantity\", r.\"updatedAt\", NOW(), FALSE\nFROM jsonb_to_recordset($1::jsonb) AS r(\n    \"spareCode\" text, \"spareName\" text, \"spareDescription\" text, \"spareType\" text,\n    \"spareStatus\" text, \"price\" numeric, \"quantity\" integer, \"updatedAt\" text\n)\nON CONFLICT (id) DO NOTHING;",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($('Sync CMS and DB Spares').first().json.to_insert) }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        672,
+        0
+      ],
+      "id": "07d48839-8952-4b8c-8291-5d7a29051b73",
+      "name": "Insert New Spares",
+      "credentials": {
+        "postgres": {
+          "id": "nbrTwRvC6DWpwglD",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE spares_history AS s SET\n    name = r.\"spareName\",\n    description = r.\"spareDescription\",\n    type = r.\"spareType\",\n    status = r.\"spareStatus\",\n    price = r.\"price\",\n    quantity = r.\"quantity\",\n    updated_at = r.\"updatedAt\",\n    last_synced_at = NOW(),\n    is_deleted = FALSE,\n    deleted_at = NULL\nFROM jsonb_to_recordset($1::jsonb) AS r(\n    \"spareCode\" text, \"spareName\" text, \"spareDescription\" text, \"spareType\" text,\n    \"spareStatus\" text, \"price\" numeric, \"quantity\" integer, \"updatedAt\" text\n)\nWHERE s.id = r.\"spareCode\";",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($('Sync CMS and DB Spares').first().json.to_update) }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        896,
+        0
+      ],
+      "id": "2a74c840-ad33-435a-b5ff-7ac5859b90c4",
+      "name": "Update Changed Spares",
+      "credentials": {
+        "postgres": {
+          "id": "nbrTwRvC6DWpwglD",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE spares_history\nSET is_deleted = TRUE, deleted_at = NOW()\nWHERE is_deleted = FALSE\n  AND id IN (SELECT jsonb_array_elements_text($1::jsonb));",
+        "options": {
+          "queryReplacement": "={{ JSON.stringify($('Sync CMS and DB Spares').first().json.to_delete) }}"
+        }
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "b855dc50-0c40-4ceb-8393-c5af8ee0d7c9",
+      "name": "Soft Delete Spares",
+      "credentials": {
+        "postgres": {
+          "id": "nbrTwRvC6DWpwglD",
+          "name": "Postgres account"
+        }
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    id AS \"spareCode\",\n    name AS \"spareName\",\n    COALESCE(description, '') AS \"spareDescription\",\n    COALESCE(type, '') AS \"spareType\",\n    COALESCE(status, '') AS \"spareStatus\",\n    trim_scale(price)::text AS \"price\",\n    quantity AS \"quantity\",\n    COALESCE(updated_at, '') AS \"updatedAt\"\nFROM spares_history\nWHERE is_deleted = FALSE\nORDER BY id;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1344,
+        0
+      ],
+      "id": "9037809b-1fff-4a12-b292-e8fc66ece18f",
+      "name": "Select Active For Report",
+      "executeOnce": true,
+      "credentials": {
+        "postgres": {
+          "id": "nbrTwRvC6DWpwglD",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// CSV для Report API: без заголовка, разделитель \";\", перевод строки \"\\n\", UTF 8 без BOM.\n// Стандартная операция Convert to File CSV всегда добавляет BOM,\n// из за чего Report API не распознаёт код первой детали.\nconst FIELDS = ['spareCode', 'spareName', 'spareDescription', 'spareType',\n                'spareStatus', 'price', 'quantity', 'updatedAt'];\n\nconst escape = value => {\n  const s = value === null || value === undefined ? '' : String(value);\n  return /[;\"\\r\\n]/.test(s) ? '\"' + s.replace(/\"/g, '\"\"') + '\"' : s;\n};\n\nconst rows = $input.all()\n  .map(item => item.json)\n  .filter(row => row.spareCode);\n\nconst csv = rows.map(row => FIELDS.map(field => escape(row[field])).join(';')).join('\\n');\n\nreturn [{ json: { rows: rows.length, csv } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "id": "de127cae-3346-4924-8172-9819b4a96d74",
+      "name": "Build CSV Lines"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "csv",
+        "options": {
+          "addBOM": false,
+          "encoding": "utf8",
+          "fileName": "spares.csv"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1792,
+        0
+      ],
+      "id": "3ba556c8-49e5-4c66-8e00-4983992df6f0",
+      "name": "Convert to CSV"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://77.67.89.207:8080/report/csv",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "text/csv; charset=utf-8"
+            },
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $('Get Token').first().json.token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2016,
+        0
+      ],
+      "id": "5d30f73f-f48b-4497-b512-502961622d33",
+      "name": "Send CSV Report"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Get Token",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Token": {
+      "main": [
+        [
+          {
+            "node": "Get CMS Spares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get CMS Spares": {
+      "main": [
+        [
+          {
+            "node": "Get DB Spares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get DB Spares": {
+      "main": [
+        [
+          {
+            "node": "Sync CMS and DB Spares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync CMS and DB Spares": {
+      "main": [
+        [
+          {
+            "node": "Insert New Spares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert New Spares": {
+      "main": [
+        [
+          {
+            "node": "Update Changed Spares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Changed Spares": {
+      "main": [
+        [
+          {
+            "node": "Soft Delete Spares",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soft Delete Spares": {
+      "main": [
+        [
+          {
+            "node": "Select Active For Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Active For Report": {
+      "main": [
+        [
+          {
+            "node": "Build CSV Lines",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build CSV Lines": {
+      "main": [
+        [
+          {
+            "node": "Convert to CSV",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to CSV": {
+      "main": [
+        [
+          {
+            "node": "Send CSV Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "0edc8143-43a6-4da0-846b-e27141368ce1",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "16da9a9c8db4796337094476e9581a32fc9da3e480e14f01d58af04209601e07"
+  },
+  "nodeGroups": [],
+  "id": "M5VZu2M6HXECUNuZ",
+  "tags": []
+}
