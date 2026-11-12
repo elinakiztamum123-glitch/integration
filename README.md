@@ -7,7 +7,7 @@
 
 ## Workflow
 
-![Workflow](https://github.com/elinakiztamum123-glitch/integration/blob/main/workflow.jpg)
+![Workflow](https://github.com/elinakiztamum123-glitch/integration/blob/main/workflow.json)
 
 ## Результат
 
