@@ -14,5 +14,3 @@
 Проверка оценки: http://77.67.89.207:8080/students/2/results
 
 - **Student ID:** 2
-- **Login:** student2
-
