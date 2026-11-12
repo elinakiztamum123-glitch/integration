@@ -1,6 +1,5 @@
 .env
-__pycache__/
-*.py[cod]
-.idea/
-.vscode/
+*.csv
 node_modules/
+.n8n/
+postgres_data/
