@@ -7,11 +7,11 @@
 
 ## Workflow
 
-![Workflow](docs/workflow.jpg)
+![Workflow](https://github.com/elinakiztamum123-glitch/integration/blob/main/workflow.jpg)
 
 ## Результат
 
-![Результат](docs/result.jpg)
+![Результат](https://github.com/elinakiztamum123-glitch/integration/blob/main/result.jpg)
 
 Проверка оценки: http://77.67.89.207:8080/students/2/results
 
